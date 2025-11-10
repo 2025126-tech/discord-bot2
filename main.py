@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 
 # ボットのトークンはあとで差し替える
-TOKEN = "MTQzNzA4ODI2NDM4MDA4ODM3Mg.GRUqhl.U-697tgvXzKVg6NC1fKcBDJm_8OtkPB9HoBI20"
+TOKEN = "TOKEN"
 
 intents = discord.Intents.default()
 intents.message_content = True
