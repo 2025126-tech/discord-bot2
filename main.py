@@ -34,6 +34,7 @@ def save_config(cfg):
 
 # ====== Discord Bot 設定 ======
 intents = discord.Intents.default()
+intents.message_content = True   # ← これが重要！
 intents.members = True
 intents.voice_states = True
 intents.guilds = True
