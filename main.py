@@ -1,148 +1,92 @@
-# main.py
-import os
-import json
-import asyncio
-from threading import Thread
-from flask import Flask
 import discord
 from discord.ext import commands
+import json
+import os
+from flask import Flask
+from threading import Thread
 
-# ========== keep-alive (Flask) ==========
+# ====== FlaskサーバーでRenderを維持 ======
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is alive!"
+    return "✅ Discord Bot is alive!"
 
-def run():
+def run_web():
     app.run(host='0.0.0.0', port=8080)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-# ========== config persistence (simple JSON) ==========
+# ====== 設定ファイル ======
 CONFIG_FILE = "guild_config.json"
-_config_lock = asyncio.Lock()
 
 def load_config():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
+            data = f.read().strip()
+            if not data:
+                return {}
+            return json.loads(data)
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-async def save_config(cfg):
-    async with _config_lock:
-        # write atomically
-        tmp = CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, CONFIG_FILE)
+def save_config(cfg):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
 
-# ========== Discord bot setup ==========
+# ====== Discord Bot 設定 ======
 intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
 intents.members = True
+intents.voice_states = True
+intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print("✅ Logged in as", bot.user)
+    print(f"✅ Bot起動完了: {bot.user}")
 
-# ---------- admin-only helper ----------
-def is_guild_admin():
-    async def predicate(ctx):
-        return ctx.author.guild_permissions.administrator
-    return commands.check(predicate)
-
-# ========== Commands to configure per-guild notify channel ==========
-@bot.command(name="set_notify")
-@is_guild_admin()
+# ====== コマンド: 通知チャンネル設定 ======
+@bot.command()
 async def set_notify(ctx, channel: discord.TextChannel):
-    """
-    サーバー管理者のみが実行可能:
-    !set_notify #channel
-    """
     cfg = load_config()
-    guild_id = str(ctx.guild.id)
-    cfg[guild_id] = {"notify_channel_id": channel.id}
-    await save_config(cfg)
-    await ctx.send(f"✅ 通知先を {channel.mention} に設定しました。")
+    cfg[str(ctx.guild.id)] = channel.id
+    save_config(cfg)
+    await ctx.send(f"✅ 通知チャンネルを {channel.mention} に設定しました。")
 
-@bot.command(name="remove_notify")
-@is_guild_admin()
-async def remove_notify(ctx):
-    cfg = load_config()
-    guild_id = str(ctx.guild.id)
-    if guild_id in cfg:
-        del cfg[guild_id]
-        await save_config(cfg)
-        await ctx.send("✅ 通知設定を削除しました。")
-    else:
-        await ctx.send("⚠️ このサーバーに設定はありません。")
-
-@bot.command(name="show_notify")
+@bot.command()
 async def show_notify(ctx):
     cfg = load_config()
-    guild_id = str(ctx.guild.id)
-    if guild_id in cfg:
-        ch_id = cfg[guild_id].get("notify_channel_id")
-        ch = bot.get_channel(ch_id)
-        if ch:
-            await ctx.send(f"📌 現在の通知先: {ch.mention}")
-            return
-    await ctx.send("ℹ️ 通知先が設定されていません。管理者は !set_notify #channel で設定できます。")
+    ch_id = cfg.get(str(ctx.guild.id))
+    if ch_id:
+        channel = bot.get_channel(ch_id)
+        await ctx.send(f"🔔 現在の通知チャンネルは {channel.mention} です。")
+    else:
+        await ctx.send("⚠️ 通知チャンネルはまだ設定されていません。")
 
-# ========== Voice state handling ==========
+# ====== VC通知イベント ======
 @bot.event
 async def on_voice_state_update(member, before, after):
-    # before/after: discord.VoiceState
-    guild = member.guild
     cfg = load_config()
-    guild_cfg = cfg.get(str(guild.id))
-    if not guild_cfg:
-        return  # このギルドは通知未設定
-
-    notify_channel_id = guild_cfg.get("notify_channel_id")
-    if not notify_channel_id:
+    ch_id = cfg.get(str(member.guild.id))
+    if not ch_id:
         return
 
-    notify_channel = bot.get_channel(notify_channel_id)
-    if notify_channel is None:
-        # Bot がチャンネルを見つけられない（アクセス権がない等）
-        try:
-            # optional: try fetch_channel
-            notify_channel = await bot.fetch_channel(notify_channel_id)
-        except Exception:
-            return
+    channel = bot.get_channel(ch_id)
+    if not channel:
+        return
 
-    # 参加
     if before.channel is None and after.channel is not None:
-        try:
-            await notify_channel.send(f"🎤 **{member.display_name}** さんが `{after.channel.name}` に参加しました。")
-        except discord.Forbidden:
-            print(f"Forbidden to send message in {notify_channel.id} for guild {guild.id}")
-    # 退出
+        await channel.send(f"🎤 {member.display_name} が {after.channel.name} に参加しました！")
     elif before.channel is not None and after.channel is None:
-        try:
-            await notify_channel.send(f"👋 **{member.display_name}** さんが `{before.channel.name}` から退出しました。")
-        except discord.Forbidden:
-            print(f"Forbidden to send message in {notify_channel.id} for guild {guild.id}")
-    # チャンネル移動（before/after 両方存在するが異なる）
-    elif before.channel is not None and after.channel is not None and before.channel != after.channel:
-        try:
-            await notify_channel.send(f"🔄 **{member.display_name}** さんが `{before.channel.name}` から `{after.channel.name}` に移動しました。")
-        except discord.Forbidden:
-            print(f"Forbidden to send message in {notify_channel.id} for guild {guild.id}")
+        await channel.send(f"👋 {member.display_name} がボイスチャットから退出しました！")
 
-# ========== Start ==========
+# ====== Flaskサーバーをバックグラウンド起動 ======
+def start_bot():
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        print("❌ 環境変数 DISCORD_TOKEN が設定されていません。")
+        return
+    bot.run(token)
+
 if __name__ == "__main__":
-    keep_alive()
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if not TOKEN:
-        print("ERROR: DISCORD_TOKEN not set")
-    else:
-        bot.run(TOKEN)
+    Thread(target=run_web).start()
+    start_bot()
