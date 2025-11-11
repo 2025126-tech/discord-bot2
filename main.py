@@ -5,12 +5,12 @@ import os
 from flask import Flask
 from threading import Thread
 
-# ====== FlaskサーバーでRenderを維持 ======
+# ====== Flaskサーバー（UptimeRobot用） ======
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Discord Bot is alive!"
+    return "✅ Discord Bot is running on Render!"
 
 def run_web():
     app.run(host='0.0.0.0', port=8080)
@@ -62,7 +62,7 @@ async def show_notify(ctx):
     else:
         await ctx.send("⚠️ 通知チャンネルはまだ設定されていません。")
 
-# ====== VC通知イベント ======
+# ====== VC通知 ======
 @bot.event
 async def on_voice_state_update(member, before, after):
     cfg = load_config()
@@ -79,7 +79,7 @@ async def on_voice_state_update(member, before, after):
     elif before.channel is not None and after.channel is None:
         await channel.send(f"👋 {member.display_name} がボイスチャットから退出しました！")
 
-# ====== Flaskサーバーをバックグラウンド起動 ======
+# ====== Flask + Bot同時起動 ======
 def start_bot():
     token = os.getenv("DISCORD_TOKEN")
     if not token:
